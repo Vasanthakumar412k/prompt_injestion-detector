@@ -7,14 +7,28 @@ import AuditorPage from './AuditorPage';
 import DocumentsPage from './DocumentsPage';
 import AccessPage from './AccessPage';
 import { ConversationProvider } from './ConversationStore';
+import { useConversations } from './ConversationStore';
+import { api } from './api';
 
 const NAV_ITEMS = {
-  chat: { id: 'chat', icon: '💬', label: 'Chat' },
-  documents: { id: 'documents', icon: '📄', label: 'Documents' },
-  access: { id: 'access', icon: '🔐', label: 'Access' },
-  auditor: { id: 'auditor', icon: '🔍', label: 'Auditor' },
-  admin: { id: 'admin', icon: '📊', label: 'Security' },
+  chat: { id: 'chat', icon: 'chat', label: 'Chat' },
+  documents: { id: 'documents', icon: 'documents', label: 'Documents' },
+  access: { id: 'access', icon: 'access', label: 'Access control' },
+  auditor: { id: 'auditor', icon: 'audit', label: 'Auditor' },
+  admin: { id: 'admin', icon: 'security', label: 'Security log' },
 };
+
+const NAV_ICON_PATHS = {
+  chat: 'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z',
+  documents: 'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z M14 2v6h6 M8 13h8 M8 17h8',
+  access: 'M5 11h14v10H5z M8 11V7a4 4 0 0 1 8 0v4',
+  audit: 'M3 3v18h18 M7 14l4-4 4 4 6-7',
+  security: 'M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z',
+};
+
+function NavigationIcon({ name }) {
+  return <svg className="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d={NAV_ICON_PATHS[name]} /></svg>;
+}
 
 function navigationFor(user) {
   const caps = user.capabilities || {};
@@ -38,29 +52,119 @@ const PAGE_TITLES = {
 
 function Sidebar({ user, activePage, onNavigate, onLogout }) {
   const navItems = navigationFor(user);
+  const {
+    conversations, loadingConversations, setConversations, setMessagesFor, modelFor, setModel,
+  } = useConversations();
+  const [sidebarError, setSidebarError] = useState('');
+
+  async function startNewChat() {
+    try {
+      setSidebarError('');
+      const conversation = await api.createConversation();
+      setConversations(previous => [conversation, ...previous.filter(item => item.id !== conversation.id)]);
+      setMessagesFor(conversation.id, []);
+      setModel(conversation.id, modelFor(null));
+      onNavigate('chat', String(conversation.id));
+    } catch (error) {
+      setSidebarError(error.message || 'Unable to create a new chat.');
+    }
+  }
+
+  async function renameChat(event, conversation) {
+    event.stopPropagation();
+    const title = window.prompt('Rename conversation', conversation.title);
+    if (!title?.trim()) return;
+    try {
+      setSidebarError('');
+      const updated = await api.renameConversation(conversation.id, title.trim());
+      setConversations(previous => previous.map(item =>
+        item.id === updated.id ? { ...item, title: updated.title } : item
+      ));
+    } catch (error) {
+      setSidebarError(error.message || 'Unable to rename this chat.');
+    }
+  }
+
+  async function deleteChat(event, conversation) {
+    event.stopPropagation();
+    if (!window.confirm(`Delete "${conversation.title}"?`)) return;
+    try {
+      setSidebarError('');
+      await api.deleteConversation(conversation.id);
+      setConversations(previous => previous.filter(item => item.id !== conversation.id));
+      if (activePage === 'chat' && window.location.pathname === `/chat/${conversation.id}`) {
+        onNavigate('chat');
+      }
+    } catch (error) {
+      setSidebarError(error.message || 'Unable to delete this chat.');
+    }
+  }
 
   return (
     <div className="sidebar">
       <div className="sidebar-logo">
-        <div className="sidebar-logo-icon">🛡️</div>
+        <div className="sidebar-logo-icon"><NavigationIcon name="security" /></div>
         <div className="sidebar-logo-text">
           <span className="brand">SecureRAG</span>
-          <span className="tagline">Prompt Defense</span>
+          <span className="tagline">Prompt defense</span>
         </div>
       </div>
 
-      <div className="sidebar-section">Navigation</div>
-      {navItems.map(item => (
-        <button
-          key={item.id}
-          id={`nav-${item.id}`}
-          className={`nav-item ${activePage === item.id ? 'active' : ''}`}
-          onClick={() => onNavigate(item.id)}
-        >
-          <span className="nav-icon">{item.icon}</span>
-          <span>{item.label}</span>
-        </button>
-      ))}
+      <div className="sidebar-section">RAG console</div>
+      <nav className="sidebar-nav" aria-label="Main navigation">
+        {navItems.map(item => (
+          <button
+            key={item.id}
+            id={`nav-${item.id}`}
+            className={`nav-item ${activePage === item.id ? 'active' : ''}`}
+            onClick={() => onNavigate(item.id)}
+            aria-current={activePage === item.id ? 'page' : undefined}
+          >
+            <NavigationIcon name={item.icon} />
+            <span>{item.label}</span>
+          </button>
+        ))}
+      </nav>
+
+      <div className="sidebar-section recent-heading">Recent</div>
+      <div className="sidebar-recent">
+        <button className="sidebar-new-chat" onClick={startNewChat}>＋ New chat</button>
+        {sidebarError && <div className="sidebar-error" role="alert">{sidebarError}</div>}
+        {loadingConversations && conversations.length === 0 && (
+          <div className="sidebar-recent-state">Loading chats…</div>
+        )}
+        {!loadingConversations && conversations.length === 0 && (
+          <div className="sidebar-recent-state">Your recent chats will appear here.</div>
+        )}
+        {conversations.map(conversation => {
+          const selected = activePage === 'chat'
+            && window.location.pathname === `/chat/${conversation.id}`;
+          return (
+            <div key={conversation.id} className={`sidebar-chat${selected ? ' active' : ''}`}>
+              <button
+                className="sidebar-chat-open"
+                onClick={() => onNavigate('chat', String(conversation.id))}
+                aria-current={selected ? 'true' : undefined}
+                title={conversation.title}
+              >
+                {conversation.title}
+              </button>
+              <div className="sidebar-chat-actions">
+                <button
+                  aria-label={`Rename ${conversation.title}`}
+                  title="Rename chat"
+                  onClick={event => renameChat(event, conversation)}
+                >✎</button>
+                <button
+                  aria-label={`Delete ${conversation.title}`}
+                  title="Delete chat"
+                  onClick={event => deleteChat(event, conversation)}
+                >×</button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
 
       <div className="sidebar-footer">
         <div className="user-chip">
@@ -142,6 +246,7 @@ function Shell({ user }) {
               active={page === 'chat'}
               conversationId={route.conversationId}
               onNavigate={navigate}
+              showConversationSidebar={false}
             />
           </div>
           {page !== 'chat' && renderPage()}

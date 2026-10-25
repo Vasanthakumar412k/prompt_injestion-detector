@@ -93,7 +93,7 @@ describe('persistent conversations', () => {
     expect(await screen.findByText('Persist this answer')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /new chat/i }));
     await waitFor(() => expect(api.createConversation).toHaveBeenCalled());
-    expect(await screen.findByText('Ask anything')).toBeInTheDocument();
+    expect(await screen.findByText('Ask your documents anything')).toBeInTheDocument();
     expect(screen.getAllByText('First chat').length).toBeGreaterThan(0);
     expect((await screen.findAllByText('Second chat')).length).toBeGreaterThan(0);
     expect(screen.queryByText('Persist this answer')).not.toBeInTheDocument();

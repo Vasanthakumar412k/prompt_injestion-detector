@@ -130,7 +130,13 @@ function relativeTime(value) {
   return `${Math.floor(seconds / 86400)}d ago`;
 }
 
-export default function ChatPage({ user, active = true, conversationId, onNavigate }) {
+export default function ChatPage({
+  user,
+  active = true,
+  conversationId,
+  onNavigate,
+  showConversationSidebar = true,
+}) {
   const store = useConversations();
   const {
     conversations, setConversations, messagesFor, setMessagesFor, loadConversation,
@@ -327,7 +333,7 @@ export default function ChatPage({ user, active = true, conversationId, onNaviga
 
   return (
     <div className="chat-layout" style={{ display: active ? 'flex' : 'none' }}>
-      <aside className={`conversation-sidebar${sidebarOpen ? ' open' : ''}`}>
+      <aside className={`conversation-sidebar${sidebarOpen ? ' open' : ''}${showConversationSidebar ? '' : ' conversation-sidebar-compact'}`}>
         <div className="conversation-sidebar-header">
           <button className="btn btn-primary btn-sm" onClick={startNewChat}>＋ New chat</button>
           <button className="conversation-drawer-close" onClick={() => setSidebarOpen(false)} aria-label="Close chats">×</button>
@@ -367,7 +373,10 @@ export default function ChatPage({ user, active = true, conversationId, onNaviga
       <div className="chat-main">
         <div className="chat-toolbar">
           <button className="conversation-drawer-open" onClick={() => setSidebarOpen(true)} aria-label="Open chat list">☰</button>
-          <span>{conversationId ? conversations.find(item => String(item.id) === String(conversationId))?.title || 'Chat' : 'New chat'}</span>
+          <div className="chat-heading">
+            <span className="chat-eyebrow">CHAT</span>
+            <span className="chat-title">{conversationId ? conversations.find(item => String(item.id) === String(conversationId))?.title || 'Chat' : 'New chat'}</span>
+          </div>
         </div>
         {conversationError && <div className="alert alert-danger mb-16">{conversationError}</div>}
         {chatError && <div className="alert alert-danger mb-16">{chatError}</div>}
@@ -377,7 +386,7 @@ export default function ChatPage({ user, active = true, conversationId, onNaviga
             <div className="empty-state" style={{ marginTop: 60 }}>
               <div className="empty-state-icon">💬</div>
               <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 8, color: 'var(--text-primary)' }}>
-                Ask anything
+                Ask your documents anything
               </div>
               <div className="empty-state-text">
                 Your query will be scanned for prompt injection before reaching the model.
