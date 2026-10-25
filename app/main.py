@@ -679,6 +679,8 @@ def _conversation_trace_payload(trace, user: User) -> dict:
         "block_reason": trace.block_reason,
         "prompt_scan": trace.prompt_scan,
         "chunks_used": trace.chunks_used,
+        "retrieval_status": trace.retrieval_status,
+        "retrieval_counts": trace.retrieval_counts,
         "chunks_dropped": [
             {"chroma_id": dropped.chroma_id, "reason": dropped.reason}
             for dropped in trace.chunks_dropped
@@ -1219,7 +1221,11 @@ def list_chunks(
 ):
     """Admin/Security: list all chunks for a document with quarantine status."""
     from app.db import Chunk
-    chunks = db.query(Chunk).filter(Chunk.document_id == doc_id).all()
+    chunks = (
+        db.query(Chunk)
+        .filter(Chunk.document_id == doc_id, Chunk.status != "superseded")
+        .all()
+    )
     return [
         {
             "id": c.id,

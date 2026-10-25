@@ -49,6 +49,40 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 API docs: http://localhost:8000/docs
 
+### Offline retrieval models and index rebuild
+
+Download the embedding model and DeBERTa detector into the ignored `models/`
+folder before starting the app. Model loading and retrieval do not download
+weights at request time. The reindex script scans new chunks with the local
+DeBERTa detector and does not send document text to hosted detector/judge APIs.
+Chunks flagged by the local detector remain `pending_judge` rather than being
+treated as confirmed injections; an admin/security user must review or retry
+them before they can be used in chat.
+
+```powershell
+python scripts/download_models.py
+```
+
+If the model files are already in the Hugging Face cache, use
+`python scripts/download_models.py --local-files-only`. After changing chunking
+settings or upgrading the embedding model, rebuild the existing index with:
+
+```powershell
+python scripts/reindex.py
+```
+
+To measure the legacy top-five baseline before a rebuild, then tune relevance
+thresholds on the evaluation dev split and evaluate the test split once:
+
+```powershell
+python -m eval.retrieval_eval --baseline-only
+python scripts/reindex.py
+python -m eval.retrieval_eval --calibrate-and-test
+```
+
+The retrieval evaluation data is in `eval/retrieval_eval.json`; expected
+document IDs match the seeded local database.
+
 ### Troubleshooting trace
 
 The backend terminal prints one `TRACE` entry per stage with a request ID. For chat and uploads, follow the same ID through authentication, detector steps, retrieval or ingestion, answer generation, and output checks. The chat Security Trace panel shows the ID, and API responses include it in the `X-Request-ID` header. Trace entries include outcomes, counts, and timings; they do not include prompts, document text, answers, passwords, tokens, or API keys.

@@ -21,6 +21,7 @@ from typing import Any, Generator, List, Literal, Optional
 
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.db import ChatLog, Chunk, Document, ScanLog, User
 from app.ensemble import EnsembleResult, run_ensemble
 from app.llm import build_rag_system_prompt, generate_answer
@@ -45,6 +46,8 @@ class SecurityTrace:
     prompt_scan: Optional[dict] = None
     chunks_used: List[str] = field(default_factory=list)       # chroma_ids
     chunks_dropped: List[DroppedChunk] = field(default_factory=list)
+    retrieval_status: Optional[str] = None
+    retrieval_counts: dict[str, int] = field(default_factory=dict)
     prompt_blocked: bool = False
     block_reason: Optional[str] = None
     output_guard: Optional[dict] = None   # result from run_output_guard
@@ -193,6 +196,7 @@ def run_chat_pipeline(
     # ── Step 3: Retrieve chunks ───────────────────────────────────────────
     started = time.perf_counter()
     trace_step("retrieval", "start", user_id=user.id, rbac_enabled=cfg.rbac_filter)
+    retrieval_stats: dict[str, int | str] = {}
     retrieved = retrieve_chunks(
         question,
         user,
@@ -200,7 +204,14 @@ def run_chat_pipeline(
         rbac_filter=cfg.rbac_filter,
         collection_override=cfg.collection_override,
         now=now,
+        stats=retrieval_stats,
     )
+    trace.retrieval_status = str(retrieval_stats.get("status", "unknown"))
+    trace.retrieval_counts = {
+        key: int(value)
+        for key, value in retrieval_stats.items()
+        if key != "status" and isinstance(value, int)
+    }
     trace_step("retrieval", "complete", user_id=user.id, retrieved_chunks=len(retrieved),
                distinct_documents=len({chunk.doc_id for chunk in retrieved}),
                duration_ms=round((time.perf_counter() - started) * 1000, 1))
@@ -303,7 +314,15 @@ def run_chat_pipeline(
                        chunk_id=chunk.sql_chunk_id or 0, reason="disabled_by_defense_config")
 
     # ── Step 5: Build LLM prompt ──────────────────────────────────────────
-    context_blocks = [c.text for c in clean_chunks]
+    context_blocks: List[str] = []
+    remaining_context_chars = settings.max_context_chars
+    for chunk in clean_chunks:
+        if remaining_context_chars <= 0:
+            break
+        context = chunk.text[:remaining_context_chars]
+        if context:
+            context_blocks.append(context)
+            remaining_context_chars -= len(context)
     if not context_blocks:
         answer = explain_empty_retrieval(question, user, db)
         if "pending security review" in answer:
@@ -316,6 +335,18 @@ def run_chat_pipeline(
             explanation_category = "quarantined"
         else:
             explanation_category = "no_relevant_context"
+            system_prompt = build_rag_system_prompt([], no_relevant_documents=True)
+            trace_step("rag_prompt_build", "complete", user_id=user.id, context_chunks=0,
+                       retrieval_status="no_relevant_chunks_above_threshold")
+            answer = generate_answer(
+                system_prompt=system_prompt,
+                user_message=question,
+                model_key=model_key,
+                stream=False,
+                conversation_history=conversation_history,
+            )
+            if not isinstance(answer, str):
+                raise RuntimeError("The no-context response unexpectedly returned a stream.")
         trace_step("rag_empty_context", "complete", user_id=user.id, user_role=user.role.name,
                    explanation_category=explanation_category)
         _save_chat_log(db, user.id, question, model_key, trace, answer, source_type=source_type)

@@ -17,6 +17,7 @@ aiosqlite==0.21.0
 # Vector store & embeddings
 chromadb==1.0.9
 sentence-transformers==4.1.0
+huggingface-hub==0.30.2
 
 # ML / Detectors  (torch 2.14.1 ships cp314 wheels for Python 3.14)
 transformers==4.51.3

@@ -9,6 +9,7 @@ node_modules/
 dist/
 reports/
 chroma_db/
+models/
 venv*/
 rag_platform.db*
 .vscode/*

@@ -38,18 +38,23 @@ class Settings(BaseSettings):
     jwt_expire_minutes: int = 60
 
     # ── Embedding model ────────────────────────────────────────────────────
-    embedding_model: str = "all-MiniLM-L6-v2"
+    embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
+    embedding_model_path: str = "./models/all-MiniLM-L6-v2"
     chroma_collection: str = "rag_chunks"
 
     # ── Chunking ───────────────────────────────────────────────────────────
-    chunk_size_tokens: int = 400
-    chunk_overlap_tokens: int = 50
+    chunk_size_tokens: int = 200
+    chunk_overlap_tokens: int = 30
     retrieval_top_k: int = 5
+    min_similarity: float = 0.45
+    relative_cutoff: float = 0.82
+    max_context_chars: int = 12000
     chat_context_turns: int = 10
     conversation_retention_days: int = 365
 
     # ── DeBERTa detector ───────────────────────────────────────────────────
     deberta_model: str = "protectai/deberta-v3-base-prompt-injection-v2"
+    deberta_model_path: str = "./models/deberta-v3-base-prompt-injection-v2"
     deberta_threshold: float = 0.5
 
     # ── Prompt Guard (Groq) ────────────────────────────────────────────────
