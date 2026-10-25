@@ -35,6 +35,7 @@ export default function AccessPage({ user }) {
   const [busy, setBusy] = useState(false);
 
   const assignableUsers = useMemo(() => users.filter((item) => item.id !== user.id), [users, user.id]);
+  const selectedRoleUser = assignableUsers.find((item) => String(item.id) === selectedUser);
 
   async function load() {
     setError('');
@@ -100,8 +101,17 @@ export default function AccessPage({ user }) {
           <form className="access-form" onSubmit={assignRole}>
             <Select label="User" value={selectedUser} onChange={(event) => setSelectedUser(event.target.value)}>
               <option value="">Choose a user</option>
-              {assignableUsers.map((item) => <option value={item.id} key={item.id}>{item.username} · {item.department || 'No department'}</option>)}
+              {assignableUsers.map((item) => (
+                <option value={item.id} key={item.id}>
+                  {item.username} · {item.role} · {item.department || 'No department'} · {item.team || 'No team'}
+                </option>
+              ))}
             </Select>
+            <p className="access-help" aria-live="polite">
+              {selectedRoleUser
+                ? `Current assignment: ${selectedRoleUser.role} · ${selectedRoleUser.department || 'No department'} · ${selectedRoleUser.team || 'No team'}`
+                : 'Select a user to see their current role, department, and team.'}
+            </p>
             <Select label="Role" value={selectedRole} onChange={(event) => setSelectedRole(event.target.value)}>
               <option value="">Choose a role</option>
               {roles.filter((role) => role.authority_rank <= user.role_authority_rank).map((role) => <option value={role.name} key={role.id}>{role.name}</option>)}
