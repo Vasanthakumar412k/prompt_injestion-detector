@@ -1,18 +1,3 @@
-# Retrieval Rebuild Report
-
-| Item | Status | Evidence |
-|---|---|---|
-| 1. Offline models | PASS | Both local model directories populated from cache; MiniLM and DeBERTa load locally; Chroma uses explicit vectors and cosine distance. |
-| 2. Token chunking/reindex | PASS | MiniLM max_seq_length=256; 14 chunks measured at 13–202 tokens (median 167.5); 9 active, 4 pending_judge, 1 quarantined. |
-| 3. Relevance cutoff | PASS | Dev chose min_similarity=0.45 and relative_cutoff=0.82; test once: recall 0.60, irrelevant share 0.455, negative-empty 1.00; old top-5: 1.00, 0.90, 0.00. |
-| 4. Tests/E2E | BLOCKED | Focused tests: 10 passed; full suite: 73 passed, 8 failed in 22.05s; offline E2E: 5 passed, 4 failed. |
-
-The full-suite failures are in grant/RBAC, the retired permission route, and the lab runner; those areas were not changed, and no tests were weakened. Offline E2E failed the two checks expecting pending documents to be immediately retrievable, the quarantined-chunk trace assertion, and the hosted Gemini-disagreement check. Provider-backed E2E remains unverified because it sends document text to hosted services.
-
-Changed: `app/config.py`, `app/embeddings.py`, `app/vector_store.py`, `app/ingest.py`, `app/retrieval.py`, `app/pipeline.py`, `app/detectors/deberta.py`, `app/main.py`, `scripts/download_models.py`, `scripts/reindex.py`, `scripts/e2e_test.py`, `eval/retrieval_eval.py`, `eval/retrieval_eval.json`, `reports/retrieval_baseline.json`, `reports/retrieval_eval_results.json`, `.env.example`, `README.md`, `AGENTS.md`, retrieval tests.
-
-Remaining: resolve the 8 existing suite failures; approve/retry the 4 pending chunks through the admin/security review flow; run provider-backed E2E only in an environment authorized to send sample document text to those providers.
-
 # Persistent Conversations - Implementation Status
 
 | Item | Status | Evidence |

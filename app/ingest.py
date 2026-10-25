@@ -24,15 +24,30 @@ logger = logging.getLogger(__name__)
 
 # ── Lazy imports for heavy dependencies ─────────────────────────────────────
 
-def _get_chroma():
-    from app.vector_store import get_chroma_client
+_chroma_client = None
+_embed_fn = None
 
-    return get_chroma_client()
+
+def _get_chroma():
+    global _chroma_client
+    if _chroma_client is None:
+        import chromadb  # type: ignore
+
+        _chroma_client = chromadb.PersistentClient(path=settings.chroma_persist_dir)
+    return _chroma_client
+
 
 def _get_collection():
-    from app.vector_store import get_collection
+    client = _get_chroma()
+    from chromadb.utils import embedding_functions  # type: ignore
 
-    return get_collection()
+    ef = embedding_functions.SentenceTransformerEmbeddingFunction(
+        model_name=settings.embedding_model
+    )
+    return client.get_or_create_collection(
+        name=settings.chroma_collection,
+        embedding_function=ef,
+    )
 
 
 # ── Text extraction ──────────────────────────────────────────────────────────
@@ -74,56 +89,29 @@ def extract_text(content: bytes, filename: str) -> str:
 
 
 def _rough_token_count(text: str) -> int:
-    """Count model tokenizer tokens, including special tokens."""
-    from app.embeddings import get_embedding_model
-
-    model = get_embedding_model()
-    return len(model.tokenizer.encode(text, add_special_tokens=True))
-
-
-def _encode_content_tokens(tokenizer, text: str) -> List[int]:
-    backend_tokenizer = getattr(tokenizer, "backend_tokenizer", None)
-    if backend_tokenizer is not None:
-        return backend_tokenizer.encode(text, add_special_tokens=False).ids
-    return tokenizer.encode(text, add_special_tokens=False)
+    """Rough word-based token estimate (≈ actual tokens for English)."""
+    return len(text.split())
 
 
 def chunk_text(text: str) -> List[str]:
     """
-    Split text by embedding-model tokens without exceeding its input limit.
+    Split text into overlapping chunks of ~chunk_size_tokens words
+    with chunk_overlap_tokens word overlap.
     """
-    if not text.strip():
-        return []
+    size = settings.chunk_size_tokens
+    overlap = settings.chunk_overlap_tokens
 
-    from app.embeddings import get_embedding_model
-
-    model = get_embedding_model()
-    tokenizer = model.tokenizer
-    max_seq_length = int(model.max_seq_length)
-    special_tokens = tokenizer.num_special_tokens_to_add(pair=False)
-    content_limit = max_seq_length - special_tokens
-    size = min(settings.chunk_size_tokens, content_limit)
-    overlap = min(settings.chunk_overlap_tokens, size - 1)
-    if size < 1:
-        raise ValueError("Embedding model max_seq_length cannot fit any content tokens.")
-
-    token_ids = _encode_content_tokens(tokenizer, text)
-    if not token_ids:
+    words = text.split()
+    if not words:
         return []
 
     chunks: List[str] = []
     start = 0
-    while start < len(token_ids):
-        end = min(start + size, len(token_ids))
-        chunk_ids = token_ids[start:end]
-        chunk = tokenizer.decode(chunk_ids, skip_special_tokens=True).strip()
-        if len(tokenizer.encode(chunk, add_special_tokens=True)) > max_seq_length:
-            raise ValueError(
-                "Decoded embedding chunk exceeds model.max_seq_length; "
-                "reduce chunk_size_tokens or use the configured model tokenizer."
-            )
+    while start < len(words):
+        end = min(start + size, len(words))
+        chunk = " ".join(words[start:end])
         chunks.append(chunk)
-        if end == len(token_ids):
+        if end == len(words):
             break
         start += size - overlap
 
@@ -283,14 +271,7 @@ def ingest_document(
     # ── Bulk upsert to ChromaDB ────────────────────────────────────────────
     if clean_ids:
         try:
-            from app.embeddings import encode_texts
-
-            collection.upsert(
-                ids=clean_ids,
-                documents=clean_texts,
-                metadatas=clean_metas,
-                embeddings=encode_texts(clean_texts),
-            )
+            collection.upsert(ids=clean_ids, documents=clean_texts, metadatas=clean_metas)
         except Exception as exc:
             trace_step("ingest.vector_store", "error", document_id=doc.id, error_type=type(exc).__name__)
             db.rollback()
@@ -312,10 +293,7 @@ def sync_department_role_metadata(db: Session) -> None:
     chunks = (
         db.query(Chunk)
         .join(Document, Chunk.document_id == Document.id)
-        .filter(
-            Document.confidentiality == "department",
-            Chunk.status != "superseded",
-        )
+        .filter(Document.confidentiality == "department")
         .all()
     )
     if not chunks:

@@ -19,7 +19,6 @@ from app.config import settings
 from app.db import Chunk, Document, User
 from app.rbac import can_read, get_accessible_document_ids, role_name
 from app.diagnostics import trace_step
-from app.embeddings import encode_texts
 
 logger = logging.getLogger(__name__)
 
@@ -29,9 +28,17 @@ _collection = None
 def _get_collection():
     global _collection
     if _collection is None:
-        from app.vector_store import get_collection
+        import chromadb  # type: ignore
+        from chromadb.utils import embedding_functions  # type: ignore
 
-        _collection = get_collection()
+        client = chromadb.PersistentClient(path=settings.chroma_persist_dir)
+        ef = embedding_functions.SentenceTransformerEmbeddingFunction(
+            model_name=settings.embedding_model
+        )
+        _collection = client.get_or_create_collection(
+            name=settings.chroma_collection,
+            embedding_function=ef,
+        )
     return _collection
 
 
@@ -44,7 +51,6 @@ class RetrievedChunk:
     distance: float
     sql_chunk_id: Optional[int] = None
     is_quarantined: bool = False
-    similarity: float = 0.0
 
 
 def retrieve_chunks(
@@ -55,23 +61,13 @@ def retrieve_chunks(
     rbac_filter: bool = True,
     collection_override: Any = None,
     now: datetime.datetime | None = None,
-    stats: dict[str, int | str] | None = None,
 ) -> List[RetrievedChunk]:
     """
     Retrieve top-k relevant chunks.
     If rbac_filter is True (default), filters by user's role before and after search.
     If rbac_filter is False (used in lab 'none' or 'detectors_only'), skips RBAC checks.
     """
-    k = settings.retrieval_top_k if top_k is None else top_k
-    retrieval_stats = stats if stats is not None else {}
-    retrieval_stats.update({
-        "candidates_before_permissions": 0,
-        "candidates_after_permissions": 0,
-        "candidates_after_status": 0,
-        "candidates_after_cutoff": 0,
-        "returned": 0,
-        "status": "no_relevant_chunks_above_threshold",
-    })
+    k = top_k or settings.retrieval_top_k
     started = time.perf_counter()
     user_role = role_name(user.role)
     trace_step("vector_retrieval", "start", user_id=user.id, user_role=user_role,
@@ -142,7 +138,6 @@ def retrieve_chunks(
             filters_applied=True,
         )
         if not accessible_doc_ids:
-            retrieval_stats["status"] = "no_accessible_documents"
             logger.info("User id=%d role=%s has no accessible documents.", user.id, user_role)
             trace_step("vector_retrieval", "complete", user_id=user.id, retrieved_chunks=0,
                        duration_ms=round((time.perf_counter() - started) * 1000, 1))
@@ -157,14 +152,16 @@ def retrieve_chunks(
     except Exception as exc:
         logger.error("Could not initialize the vector store: %s", exc)
         trace_step("vector_store", "error", error_type=type(exc).__name__)
-        raise
+        trace_step("vector_retrieval", "complete", user_id=user.id, retrieved_chunks=0,
+                   duration_ms=round((time.perf_counter() - started) * 1000, 1))
+        return []
 
     # ── Step 2: ChromaDB query (over-fetch; post-filter) ─────────────────
     try:
         n_fetch = min(k * 6, 100)
         trace_step("vector_query", "start", fetch_limit=n_fetch)
         query_options = {
-            "query_embeddings": encode_texts([query]),
+            "query_texts": [query],
             "n_results": n_fetch,
             "include": ["documents", "metadatas", "distances"],
         }
@@ -174,9 +171,11 @@ def retrieve_chunks(
     except Exception as exc:
         logger.error("ChromaDB query failed: %s", exc)
         trace_step("vector_query", "error", error_type=type(exc).__name__)
-        raise
+        trace_step("vector_retrieval", "complete", user_id=user.id, retrieved_chunks=0,
+                   duration_ms=round((time.perf_counter() - started) * 1000, 1))
+        return []
 
-    # ── Step 3: Permission/status filtering before relevance cutoff ────────
+    # ── Step 3: Post-filter + re-verify via SQL ───────────────────────────
     ids = results.get("ids", [[]])[0]
     docs_text = results.get("documents", [[]])[0]
     metas = results.get("metadatas", [[]])[0]
@@ -184,7 +183,6 @@ def retrieve_chunks(
     trace_step("vector_query", "complete", candidates=len(ids))
 
     verified: List[RetrievedChunk] = []
-    retrieval_stats["candidates_before_permissions"] = len(ids)
     permission_denials = 0
     held_count = 0
     for chroma_id, text, meta, dist in zip(ids, docs_text, metas, distances):
@@ -254,7 +252,6 @@ def retrieve_chunks(
                     distance=float(dist),
                     sql_chunk_id=sql_chunk.id,
                     is_quarantined=True,
-                    similarity=1.0 - float(dist),
                 )
             )
             continue
@@ -268,37 +265,17 @@ def retrieve_chunks(
                 distance=float(dist),
                 sql_chunk_id=sql_chunk.id if sql_chunk else None,
                 is_quarantined=False,
-                similarity=1.0 - float(dist),
             )
         )
 
-    retrieval_stats["candidates_after_permissions"] = len(ids) - permission_denials
-    eligible = [chunk for chunk in verified if not chunk.is_quarantined]
-    retrieval_stats["candidates_after_status"] = len(eligible)
-    best_similarity = max((chunk.similarity for chunk in eligible), default=None)
-    if best_similarity is not None:
-        cutoff = max(settings.min_similarity, best_similarity * settings.relative_cutoff)
-        eligible = [chunk for chunk in eligible if chunk.similarity >= cutoff]
-    else:
-        cutoff = settings.min_similarity
-    eligible.sort(key=lambda chunk: chunk.similarity, reverse=True)
-    retrieval_stats["candidates_after_cutoff"] = len(eligible)
-    selected = eligible[:k]
-    retrieval_stats["returned"] = len(selected)
-    if selected:
-        retrieval_stats["status"] = "relevant_chunks_found"
-    trace_step("retrieval_cutoff", "complete",
-               status=str(retrieval_stats["status"]),
-               candidates_before=int(retrieval_stats["candidates_before_permissions"]),
-               candidates_after_permissions=int(retrieval_stats["candidates_after_permissions"]),
-               candidates_after_status=int(retrieval_stats["candidates_after_status"]),
-               candidates_after_cutoff=int(retrieval_stats["candidates_after_cutoff"]),
-               returned=len(selected))
-    trace_step("vector_postfilter", "complete", allowed_chunks=len(selected),
+        if len(verified) >= k:
+            break
+
+    trace_step("vector_postfilter", "complete", allowed_chunks=len(verified),
                denied_candidates=permission_denials, held_candidates=held_count)
-    trace_step("vector_retrieval", "complete", user_id=user.id, retrieved_chunks=len(selected),
+    trace_step("vector_retrieval", "complete", user_id=user.id, retrieved_chunks=len(verified),
                duration_ms=round((time.perf_counter() - started) * 1000, 1))
-    return selected
+    return verified
 
 
 _TITLE_STOP_WORDS = {"a", "about", "an", "and", "asking", "document", "for", "of", "the"}

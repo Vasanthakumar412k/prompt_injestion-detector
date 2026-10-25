@@ -6,10 +6,9 @@ from __future__ import annotations
 
 import sys
 import time
-import os
 import httpx
 
-BASE_URL = os.getenv("E2E_BASE_URL", "http://localhost:8000")
+BASE_URL = "http://localhost:8000"
 
 
 def main():

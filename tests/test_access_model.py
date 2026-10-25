@@ -23,9 +23,8 @@ from app.retrieval import retrieve_chunks
 
 
 class FakeCollection:
-    def __init__(self, rows, distances=None):
+    def __init__(self, rows):
         self.rows = rows
-        self.distances = distances
         self.last_query = None
 
     def query(self, **kwargs):
@@ -36,9 +35,7 @@ class FakeCollection:
             rows = [r for r in rows if r["metadata"]["doc_id"] in where]
         rows = rows[:kwargs["n_results"]]
         return {"ids": [[r["id"] for r in rows]], "documents": [[r["text"] for r in rows]],
-                "metadatas": [[r["metadata"] for r in rows]],
-                "distances": [[self.distances.get(r["id"], 0.1) if self.distances else 0.1
-                               for r in rows]]}
+                "metadatas": [[r["metadata"] for r in rows]], "distances": [[0.1 for _ in rows]]}
 
 
 @pytest.fixture
@@ -207,15 +204,6 @@ def test_hr_manager_can_retrieve_engineering_department_guide(access_db):
 def test_department_vector_metadata_includes_hr_manager(access_db):
     db, _, docs, _ = access_db
     chunk = db.query(Chunk).filter(Chunk.document_id == docs["department"].id).one()
-    db.add(
-        Chunk(
-            document_id=docs["department"].id,
-            chunk_index=99,
-            chroma_id="superseded_department_chunk",
-            status="superseded",
-        )
-    )
-    db.flush()
     collection = MagicMock()
     collection.get.return_value = {
         "ids": [chunk.chroma_id],
@@ -225,10 +213,6 @@ def test_department_vector_metadata_includes_hr_manager(access_db):
     client.get_collection.return_value = collection
     with patch("app.ingest._get_chroma", return_value=client):
         sync_department_role_metadata(db)
-    collection.get.assert_called_once_with(
-        ids=[chunk.chroma_id],
-        include=["metadatas"],
-    )
     collection.update.assert_called_once_with(
         ids=[chunk.chroma_id],
         metadatas=[{
@@ -318,79 +302,6 @@ def test_expired_and_quarantined_chunks_are_never_retrieved(access_db):
     with patch("app.retrieval._get_collection", return_value=collection):
         result = retrieve_chunks("salary", users["employee"], db)
     assert not any(hit.doc_id == docs["salary"].id for hit in result)
-
-
-def test_retrieval_cutoff_keeps_strongest_and_drops_weak_matches(access_db, monkeypatch):
-    db, users, docs, rows = access_db
-    distances = {
-        "chunk_public": 0.1,
-        "chunk_internal": 0.45,
-        "chunk_department": 0.55,
-        "chunk_salary": 0.75,
-    }
-    collection = FakeCollection(rows, distances)
-    monkeypatch.setattr("app.retrieval.settings.min_similarity", 0.3)
-    monkeypatch.setattr("app.retrieval.settings.relative_cutoff", 0.8)
-
-    with patch("app.retrieval._get_collection", return_value=collection):
-        hits = retrieve_chunks("company policy details", users["hr_manager"], db)
-
-    assert [hit.chroma_id for hit in hits] == ["chunk_public"]
-    assert hits[0].similarity == pytest.approx(0.9)
-
-
-def test_retrieval_below_threshold_returns_explicit_empty_status(access_db, monkeypatch):
-    db, users, _, rows = access_db
-    collection = FakeCollection(rows, {row["id"]: 0.8 for row in rows})
-    stats = {}
-    monkeypatch.setattr("app.retrieval.settings.min_similarity", 0.35)
-    monkeypatch.setattr("app.retrieval.settings.relative_cutoff", 0.82)
-
-    with patch("app.retrieval._get_collection", return_value=collection):
-        hits = retrieve_chunks(
-            "unrelated synthetic request", users["hr_manager"], db, stats=stats
-        )
-
-    assert hits == []
-    assert stats["status"] == "no_relevant_chunks_above_threshold"
-    assert stats["candidates_after_cutoff"] == 0
-
-
-def test_empty_retrieval_uses_no_relevant_document_prompt(access_db, monkeypatch):
-    db, users, docs, rows = access_db
-    docs["public"].filename = "company_policy.txt"
-    collection = FakeCollection(rows, {row["id"]: 0.8 for row in rows})
-    monkeypatch.setattr("app.retrieval.settings.min_similarity", 0.35)
-    monkeypatch.setattr("app.retrieval.settings.relative_cutoff", 0.82)
-    with patch("app.retrieval._get_collection", return_value=collection), \
-         patch("app.pipeline.generate_answer", side_effect=lambda system_prompt, **_: system_prompt):
-        result = run_chat_pipeline(
-            "What is the lunar company policy?",
-            "test",
-            users["hr_manager"],
-            db,
-            defense_config=DefenseConfig.rbac_only(),
-        )
-
-    assert "No relevant document passed the retrieval relevance threshold" in result.answer
-
-
-def test_context_respects_maximum_character_budget(access_db, monkeypatch):
-    db, users, _, rows = access_db
-    collection = FakeCollection(rows)
-    monkeypatch.setattr("app.pipeline.settings.max_context_chars", 8)
-    with patch("app.retrieval._get_collection", return_value=collection), \
-         patch("app.pipeline.generate_answer", side_effect=lambda system_prompt, **_: system_prompt):
-        result = run_chat_pipeline(
-            "Summarize the company policy.",
-            "test",
-            users["hr_manager"],
-            db,
-            defense_config=DefenseConfig.rbac_only(),
-        )
-
-    assert "DOC_PUBL" in result.answer
-    assert "DOC_PUBLIC_SECRET" not in result.answer
 
 
 def test_grant_matrix_retrieval_list_and_chat_at_expiry_and_revocation(access_db):

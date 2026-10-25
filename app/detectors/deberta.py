@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import logging
 import time
-from pathlib import Path
 from typing import Any
 
 from app.config import settings
@@ -22,35 +21,20 @@ def _load_pipeline() -> Any:
     """Lazy-load the transformers pipeline (heavy; load once)."""
     global _pipeline
     if _pipeline is None:
-        from transformers import (  # type: ignore
-            AutoModelForSequenceClassification,
-            AutoTokenizer,
-            pipeline,
-        )
-
-        model_path = Path(settings.deberta_model_path).expanduser()
-        reference = str(model_path) if model_path.is_dir() else settings.deberta_model
-        logger.info("Loading local-only DeBERTa model: %s", reference)
         try:
-            tokenizer = AutoTokenizer.from_pretrained(
-                reference,
-                local_files_only=True,
-            )
-            model = AutoModelForSequenceClassification.from_pretrained(
-                reference,
-                local_files_only=True,
-            )
+            from transformers import pipeline  # type: ignore
+
+            logger.info("Loading DeBERTa model: %s", settings.deberta_model)
             _pipeline = pipeline(
                 "text-classification",
-                model=model,
-                tokenizer=tokenizer,
+                model=settings.deberta_model,
+                truncation=True,
+                max_length=512,
             )
+            logger.info("DeBERTa model loaded.")
         except Exception as exc:
-            raise RuntimeError(
-                "The local DeBERTa detector model is unavailable. Run "
-                "`python scripts/download_models.py` before starting the app."
-            ) from exc
-        logger.info("DeBERTa model loaded from local files.")
+            logger.error("Failed to load DeBERTa model: %s", exc)
+            _pipeline = None
     return _pipeline
 
 
@@ -67,11 +51,17 @@ class DeBERTaDetector(BaseDetector):
 
     def scan(self, text: str) -> DetectorResult:
         if self._pipe is None:
+            # Attempt reload once per call in case environment changed
             self._pipe = _load_pipeline()
+        if self._pipe is None:
+            return DetectorResult(
+                label="UNKNOWN",
+                error="DeBERTa pipeline not available",
+            )
 
         t0 = time.monotonic()
         try:
-            results = self._pipe(text[:2048], truncation=True, max_length=512)
+            results = self._pipe(text[:2048])  # truncate to avoid OOM
             latency_ms = (time.monotonic() - t0) * 1000
 
             # Pipeline returns list of {label, score}
