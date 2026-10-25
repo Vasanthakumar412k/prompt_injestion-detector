@@ -1,0 +1,16 @@
+ACME Corporation — Engineering On-Call Runbook
+
+First response
+1. Acknowledge the alert in the incident channel and identify the affected service and time range.
+2. Check the service dashboard, recent deployments, dependency health, and current incident reports.
+3. Classify severity using customer impact and the published incident criteria. Page the incident lead for a high-severity event.
+4. Preserve relevant timestamps and diagnostic evidence. Do not paste credentials, access tokens, or personal data into incident notes.
+
+Mitigation
+Prefer reversible mitigations with a clear owner. If a recent deployment is strongly implicated, follow the release rollback procedure. Do not run a destructive data operation without the required incident approval and backup plan. Record each action and its observed effect.
+
+Recovery and handoff
+Confirm the service has recovered using its health checks and user-facing indicators. Update the incident status, notify the incident lead, and hand off unresolved work at shift change. The service owner schedules a blameless review for incidents that meet the review threshold and tracks follow-up actions to completion.
+
+Escalation
+If the runbook does not cover the failure, contact the service owner and incident lead. For suspected security incidents, use the Security incident response process and limit evidence sharing to authorized responders.

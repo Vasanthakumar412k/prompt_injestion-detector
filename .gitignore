@@ -1,0 +1,15 @@
+.env
+.env.*
+!.env.example
+seed_users.json
+__pycache__/
+*.pyc
+.pytest_cache/
+node_modules/
+dist/
+reports/
+chroma_db/
+venv*/
+rag_platform.db*
+.vscode/*
+!.vscode/extensions.json

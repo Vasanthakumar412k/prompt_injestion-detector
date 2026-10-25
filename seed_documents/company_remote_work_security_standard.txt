@@ -1,0 +1,9 @@
+ACME Corporation — Remote Work Security Standard
+
+Remote work must follow the employee's team arrangements and manager approval. Use a private, trusted network protected by a current router password. Avoid conducting company work over public Wi-Fi unless using the company-approved secure connection.
+
+Keep company devices updated and protected with full-disk encryption and automatic screen locking. Store company files only in approved systems. Do not copy restricted information to personal email, personal cloud storage, or removable media without explicit authorization.
+
+Position screens to reduce viewing by others, use a headset for confidential calls, and lock the device when stepping away. Report a lost device, suspected account compromise, or accidental disclosure promptly through the Security incident channel.
+
+Managers should agree on availability, collaboration hours, and outcomes with remote team members. Remote work does not change the employee's responsibility to follow the company's data-handling and acceptable-use policies.

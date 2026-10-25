@@ -1,0 +1,16 @@
+ACME Corporation — Engineering Release Process Guide
+
+Purpose
+This guide provides the standard release path for Engineering services. A service team may add stricter controls when required by its risk classification.
+
+Before release
+- Link the change to an approved issue and obtain review from another engineer.
+- Run the relevant automated tests and confirm required security checks pass.
+- Review configuration and database changes for backward compatibility and a rollback path.
+- Update operational notes and customer-facing release notes when behavior changes.
+
+Deployment
+Use the approved CI/CD pipeline and the team's scheduled release window. Deploy to staging first, run the smoke checks, and confirm monitoring is healthy. Production changes require the approvals configured for that service. Avoid sharing deployment credentials in tickets, chat, or source control.
+
+After release
+Watch service health, error rates, and key user journeys. Record the deployment version and outcome. If a release causes a serious regression, use the documented rollback procedure, notify the on-call engineer, and open an incident record. Follow-up work should identify the cause and preventive actions.
